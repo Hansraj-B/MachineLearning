@@ -1,0 +1,138 @@
+---
+title: "Predicting quality of activity using fitness tracker data"
+author: "Hansraj B"
+date: "November 10, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##R Version and platform
+R version 3.3.1 (2016-06-21) -- "Bug in Your Hair"
+Platform: x86_64-w64-mingw32/x64 (64-bit)
+
+##Summary
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. Normally people quantify how much is done not how well. The data consists of readings from accelerometers on the belt, forearm, arm, and dumbell of 6 participant. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). The following analysis attempts to predict the quality of activity based on the data. 
+
+##Getting the data
+###Download the files
+Store the data files into local drive.
+```{r downloadfiles, cache=TRUE}
+if (!file.exists("./pml-training.csv")) {
+  urltr <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+  download.file(urltr, destfile = "./pml-training.csv")
+}
+
+if (!file.exists("./pml-testing.csv")) {
+  urlte <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+  download.file(urlte, destfile = "./pml-testing.csv")
+}
+```
+###Load the files
+Load training data - this will be used for generating the model and for cross validation
+```{r gettingtrainingdata, cache=TRUE}
+training <- read.csv('./pml-training.csv', na.strings = c("NA",""))
+dim(training)
+```
+Load test data - this will be used for out of sample validation
+```{r gettingtestingdata, cache=TRUE}
+testing <- read.csv('./pml-testing.csv', na.strings = c("NA",""))
+dim(testing)
+```
+
+##Cleaning data
+Find out how many NA's exists in each column and exclude the ones that have lesser than 50% of the data points that are empty. 
+```{r findandRemoveNAs}
+nacount <- colSums(is.na(training))<9000
+    
+#For training set
+trainingclean <- training[,nacount]
+dim(trainingclean)
+#clean testing set using same columns
+testingclean <- testing[,nacount]
+dim(testingclean)
+```
+
+Remove all other unnecessary fields. e.g. X, Name etc are superfluous to this analysis. The first seven columns are removed as they logically dont add any value to the analysis.
+```{r removeotherdata}
+trainingclean <- trainingclean[,-c(1:7)]
+testingclean <- testingclean[,-c(1:7)]
+```
+
+Find out the feature set to determine is any of the other variable can be dropped.
+
+**Checking for gyrometer data**
+```{r correlationmatrixgyro}
+library(corrplot)
+getcols <- names(trainingclean)
+getcols <- getcols[grep("^gyros",names(trainingclean),ignore.case = TRUE)]
+r2 <- cor(data.frame(trainingclean[,getcols],CLASSE=as.numeric(trainingclean[,"classe"])))
+corrplot(r2,method="number")
+```
+
+It appears that Gyrometer readings have no impact on the CLASSE outcome.
+
+**Checking for accelerator data**
+```{r correlationmatrixaccel}
+library(corrplot)
+getcols <- names(trainingclean)
+getcols <- getcols[grep("^accel",names(trainingclean),ignore.case = TRUE)]
+r2 <- cor(data.frame(trainingclean[,getcols],CLASSE=as.numeric(trainingclean[,"classe"])))
+corrplot(r2,method="number")
+```
+
+It appears that the accelerator readings have some impact on the CLASSE outcome.
+
+**Checking for magetometer data**
+```{r correlationmatrixmagnet}
+library(corrplot)
+getcols <- names(trainingclean)
+getcols <- getcols[grep("^magn",names(trainingclean),ignore.case = TRUE)]
+r2 <- cor(data.frame(trainingclean[,getcols],CLASSE=as.numeric(trainingclean[,"classe"])))
+corrplot(r2,method="number")
+```
+
+It appears that the magnetometer readings have some impact on the CLASSE outcome
+
+##Partition the data for analysis
+Data is partioned into training set and testing set which will be used for validating the model.
+```{r partition, cache=TRUE}
+library(caret)
+set.seed(78163)
+inTrain <- createDataPartition(trainingclean$classe,p=0.7,list=FALSE)
+dtraining <- trainingclean[inTrain,]
+dim(dtraining)
+dtesting <- trainingclean[-inTrain,]
+dim(dtesting)
+```
+
+##Creating the prediction model
+Since the relationship between the predictors and the outcome is quite weak, we will use random forest method for constructing the model. Small numnber of cross validations (CV=5) and trees (ntree=50) are used due to limited processing power available. 
+```{r creatingmodel, cache=TRUE}
+set.seed(71846)
+modfit <- train(classe~., method="rf", data=dtraining,trControl=trainControl(method="cv",number=5), ntree=50)
+modfit
+```
+The accuracy of the model is quite high at 98.98% with respect to the training data. We will now validate the prediction model with the test data
+
+##Validation of the model
+Using the test data set the created model is tested. This will provide us with accuracy and the out of sample error rate.
+```{r modeltesting}
+cm <- caret::confusionMatrix(predict(modfit,dtesting), dtesting$classe)
+Acc <- as.numeric(cm$overall["Accuracy"])
+Err <- as.numeric(1-Acc)
+data.frame(Accuracy=Acc, OutofSampleError=Err)
+```
+
+##Out of Sample error
+The overall accuracy is above `r round(100*Acc,2)`% and the Out of sample error rate is `r round(100*Err,2)`%.
+
+##Test data prediction
+Using the original testing data downloaded from site we will now attempt to predict the Classe based on the model generated
+```{r predictclass}
+result <- predict(modfit,testingclean)
+data.frame(ProblemID=testingclean$problem_id,result)
+```
+
+
